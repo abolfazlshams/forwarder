@@ -1,56 +1,90 @@
-import os
 import asyncio
+from flask import Flask, jsonify
+from threading import Thread
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError
-from keep_alive import keep_alive
+import os
 
-# پر شده بر اساس اطلاعات تو
-api_id = 20653789
-api_hash = '15dd050807a9919b75ec982236198e33'
-phone = '+989155906210'
+app = Flask('')
 
-source_channel = 'gym_workoutss'  # بدون @
-dest_group = 'Fit_Group'  # بدون @
+# اطلاعات ربات
+API_ID = int(os.getenv('API_ID', '20653789'))
+API_HASH = os.getenv('API_HASH', '15dd050807a9919b75ec982236198e33')
+PHONE = os.getenv('PHONE', '+98155906210')
+SOURCE_CHANNEL = os.getenv('SOURCE_CHANNEL', 'gym_workoutss')
+DEST_GROUP = os.getenv('DEST_GROUP', 'Fit_Group')
 
-client = TelegramClient('forward_session', api_id, api_hash)
+# کلاینت تلگرام
+client = TelegramClient('session', API_ID, API_HASH)
 
+@app.route('/')
+def home():
+    return f"Bot is running! Forwarding from {SOURCE_CHANNEL} to {DEST_GROUP}"
 
-@client.on(events.NewMessage(chats=source_channel))
+@app.route('/status')
+def status():
+    return jsonify({
+        "status": "running",
+        "telethon_connected": client.is_connected() if client else False,
+        "source_channel": SOURCE_CHANNEL,
+        "destination_group": DEST_GROUP
+    })
+
+# پیام‌های جدید
+@client.on(events.NewMessage(chats=SOURCE_CHANNEL))
 async def handler(event):
     try:
-        await client.forward_messages(dest_group, event.message)
-        print(f"Forwarded new message {event.message.id}")
-        await asyncio.sleep(600)
+        await client.forward_messages(DEST_GROUP, event.message)
+        print(f"✅ Forwarded new message {event.message.id}")
     except FloodWaitError as e:
-        print(f"FloodWait: waiting {e.seconds}s")
+        print(f"⏳ FloodWait: waiting {e.seconds}s")
         await asyncio.sleep(e.seconds + 1)
     except Exception as e:
-        print(f"Error forwarding new message: {e}")
+        print(f"❌ Error: {e}")
 
-
+# پیام‌های قدیمی
 async def forward_old_messages():
-    print("Fetching last 1800 messages...")
-    messages = await client.get_messages(source_channel, limit=1800)
-    for m in reversed(messages):
-        try:
-            await client.forward_messages(dest_group, m)
-            print(f"Forwarded old message {m.id}")
-            await asyncio.sleep(600)
-        except FloodWaitError as e:
-            print(f"FloodWait while forwarding old message: {e.seconds}s")
-            await asyncio.sleep(e.seconds + 1)
-        except Exception as e:
-            print(f"Error forwarding old message {m.id}: {e}")
+    print("📜 Forwarding last 1600 old messages...")
+    try:
+        messages = await client.get_messages(SOURCE_CHANNEL, limit=1600)
+        for msg in reversed(messages):
+            try:
+                await client.forward_messages(DEST_GROUP, msg)
+                print(f"📨 Forwarded old message {msg.id}")
+                await asyncio.sleep(600)
+            except FloodWaitError as e:
+                print(f"⏳ FloodWait while forwarding old: {e.seconds}s")
+                await asyncio.sleep(e.seconds + 1)
+            except Exception as e:
+                print(f"❌ Error forwarding old message {msg.id}: {e}")
+    except Exception as e:
+        print(f"❌ Error getting old messages: {e}")
 
+# شروع ربات
+async def init_bot():
+    await client.start(PHONE)
+    print("🚀 Bot started!")
 
-async def main():
-    keep_alive()  # شروع وب سرور keep-alive
-    await client.start(phone)
-    print("Signed in and running...")
     await forward_old_messages()
-    print("Listening for new messages...")
-    await asyncio.Event().wait()  # نگه داشتن برنامه برای شنیدن پیام‌های جدید
 
+    print(f"📡 Listening for new messages from {SOURCE_CHANNEL}")
+    await client.run_until_disconnected()
+
+# Flask
+def run_flask():
+    port = int(os.getenv("PORT", 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+# Telegram
+def run_telegram():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(init_bot())
+
+# اجرای همزمان
+def keep_alive():
+    Thread(target=run_flask, daemon=True).start()
+    run_telegram()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    keep_alive()
